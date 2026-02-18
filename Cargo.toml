@@ -1,0 +1,11 @@
+[package]
+name = "cw"
+version = "0.1.0"
+edition = "2024"
+description = "Claude Workers - Git clone-based workspace manager"
+rust-version = "1.93"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+unison-kdl = { git = "https://github.com/chronista-club/unison-kdl" }
+glob = "0.3"
