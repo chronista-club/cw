@@ -8,7 +8,15 @@ pub fn new_worker(name: &str, branch: &str) -> Result<(), String> {
     let remote_url = config::get_remote_url().map_err(|e| e.to_string())?;
     let cfg = config::load_config(&repo_root)?;
     let workers_dir = config::workers_dir();
-    let worker_dir = workers_dir.join(name);
+
+    // Auto-prefix with repo name if not already included
+    let repo_name = config::repo_name().unwrap_or_default();
+    let actual_name = if !repo_name.is_empty() && !name.starts_with(&format!("{repo_name}-")) {
+        format!("{repo_name}-{name}")
+    } else {
+        name.to_string()
+    };
+    let worker_dir = workers_dir.join(&actual_name);
 
     // Clean up existing
     if worker_dir.exists() {
@@ -125,12 +133,21 @@ pub fn list_workers() -> Result<(), String> {
 
 /// Print the path to a worker
 pub fn worker_path(name: &str) -> Result<(), String> {
-    let worker_dir = config::workers_dir().join(name);
-    if !worker_dir.exists() {
-        return Err(format!("worker '{name}' not found"));
+    let workers_dir = config::workers_dir();
+    let worker_dir = workers_dir.join(name);
+    if worker_dir.exists() {
+        println!("{}", worker_dir.display());
+        return Ok(());
     }
-    println!("{}", worker_dir.display());
-    Ok(())
+    // Fallback: try with repo name prefix
+    if let Some(repo_name) = config::repo_name() {
+        let prefixed = workers_dir.join(format!("{repo_name}-{name}"));
+        if prefixed.exists() {
+            println!("{}", prefixed.display());
+            return Ok(());
+        }
+    }
+    Err(format!("worker '{name}' not found"))
 }
 
 /// Remove a worker environment
@@ -147,12 +164,22 @@ pub fn remove_worker(name: Option<&str>, all: bool) -> Result<(), String> {
 
     let name = name.ok_or("specify a worker name or --all")?;
     let worker_dir = workers_dir.join(name);
-    if !worker_dir.exists() {
-        return Err(format!("worker '{name}' not found"));
+    if worker_dir.exists() {
+        fs::remove_dir_all(&worker_dir).map_err(|e| e.to_string())?;
+        eprintln!("Removed worker: {name}");
+        return Ok(());
     }
-    fs::remove_dir_all(&worker_dir).map_err(|e| e.to_string())?;
-    eprintln!("Removed worker: {name}");
-    Ok(())
+    // Fallback: try with repo name prefix
+    if let Some(repo_name) = config::repo_name() {
+        let prefixed_name = format!("{repo_name}-{name}");
+        let prefixed_dir = workers_dir.join(&prefixed_name);
+        if prefixed_dir.exists() {
+            fs::remove_dir_all(&prefixed_dir).map_err(|e| e.to_string())?;
+            eprintln!("Removed worker: {prefixed_name}");
+            return Ok(());
+        }
+    }
+    Err(format!("worker '{name}' not found"))
 }
 
 // --- helpers ---

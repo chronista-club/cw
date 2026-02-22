@@ -97,13 +97,23 @@ pub fn load_config(repo_root: &Path) -> Result<WorkerConfig, String> {
 
 /// Get the workers cache directory
 pub fn workers_dir() -> PathBuf {
+    if let Ok(dir) = env::var("CW_WORKERS_DIR") {
+        return PathBuf::from(dir);
+    }
     let cache = env::var("XDG_CACHE_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
             let home = env::var("HOME").expect("HOME not set");
             PathBuf::from(home).join(".cache")
         });
-    cache.join("creo-workers")
+    cache.join("cw")
+}
+
+/// Get the repo name (basename of repo root)
+pub fn repo_name() -> Option<String> {
+    find_repo_root()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
 }
 
 /// Get the origin remote URL
