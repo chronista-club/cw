@@ -29,11 +29,14 @@ enum Commands {
     },
     /// Remove a worker environment
     Rm {
-        /// Worker name (or --all)
+        /// Worker name (or --all --force)
         name: Option<String>,
-        /// Remove all workers
+        /// Remove all workers (requires --force)
         #[arg(long)]
         all: bool,
+        /// Force removal without confirmation
+        #[arg(long, short)]
+        force: bool,
     },
 }
 
@@ -44,7 +47,7 @@ fn main() -> ExitCode {
         Commands::New { name, branch } => commands::new_worker(&name, &branch),
         Commands::Ls => commands::list_workers(),
         Commands::Path { name } => commands::worker_path(&name),
-        Commands::Rm { name, all } => commands::remove_worker(name.as_deref(), all),
+        Commands::Rm { name, all, force } => commands::remove_worker(name.as_deref(), all, force),
     };
 
     match result {

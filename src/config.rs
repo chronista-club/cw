@@ -88,25 +88,40 @@ pub fn find_repo_root() -> io::Result<PathBuf> {
 pub fn load_config(repo_root: &Path) -> Result<WorkerConfig, String> {
     let config_path = repo_root.join(CONFIG_FILE);
     if !config_path.exists() {
-        return Err(format!("{CONFIG_FILE} not found"));
+        return Err(format!(
+            "{CONFIG_FILE} not found. Create it to define symlinks/copies for worker environments."
+        ));
     }
     let content = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
     let raw: RawConfig = unison_kdl::from_str(&content).map_err(|e| e.to_string())?;
     Ok(raw.into())
 }
 
-/// Get the workers cache directory
-pub fn workers_dir() -> PathBuf {
+/// Get the workers data directory (XDG_DATA_HOME compliant)
+pub fn workers_dir() -> Result<PathBuf, String> {
     if let Ok(dir) = env::var("CCWS_WORKERS_DIR") {
-        return PathBuf::from(dir);
+        return Ok(PathBuf::from(dir));
     }
-    let cache = env::var("XDG_CACHE_HOME")
+    let data = env::var("XDG_DATA_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
-            let home = env::var("HOME").expect("HOME not set");
-            PathBuf::from(home).join(".cache")
+            let home = env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+            PathBuf::from(home).join(".local/share")
         });
-    cache.join("ccws")
+    Ok(data.join("ccws"))
+}
+
+/// Validate that a worker name is safe (no path traversal)
+pub fn validate_worker_name(name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("worker name cannot be empty".into());
+    }
+    if name.contains('/') || name.contains('\\') || name.contains("..") || name.starts_with('.') {
+        return Err(format!(
+            "invalid worker name: '{name}'. Names cannot contain '/', '\\', '..', or start with '.'"
+        ));
+    }
+    Ok(())
 }
 
 /// Get the repo name (basename of repo root)

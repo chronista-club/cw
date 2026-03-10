@@ -4,10 +4,12 @@ use std::fs;
 
 /// Create a new worker environment
 pub fn new_worker(name: &str, branch: &str) -> Result<(), String> {
+    config::validate_worker_name(name)?;
+
     let repo_root = config::find_repo_root().map_err(|e| e.to_string())?;
     let remote_url = config::get_remote_url().map_err(|e| e.to_string())?;
     let cfg = config::load_config(&repo_root)?;
-    let workers_dir = config::workers_dir();
+    let workers_dir = config::workers_dir()?;
 
     // Auto-prefix with repo name if not already included
     let repo_name = config::repo_name().unwrap_or_default();
@@ -27,7 +29,11 @@ pub fn new_worker(name: &str, branch: &str) -> Result<(), String> {
     // Clone
     fs::create_dir_all(&workers_dir).map_err(|e| e.to_string())?;
     eprintln!("Cloning to {}...", worker_dir.display());
-    run_git(&["clone", "--depth", "1", repo_root.to_str().unwrap(), worker_dir.to_str().unwrap()])?;
+    let repo_root_str = repo_root.to_str()
+        .ok_or("repo root path is not valid UTF-8")?;
+    let worker_dir_str = worker_dir.to_str()
+        .ok_or("worker dir path is not valid UTF-8")?;
+    run_git(&["clone", "--depth", "1", repo_root_str, worker_dir_str])?;
 
     // Set remote to GitHub URL
     run_git_in(&worker_dir, &["remote", "set-url", "origin", &remote_url])?;
@@ -62,8 +68,7 @@ pub fn new_worker(name: &str, branch: &str) -> Result<(), String> {
 
     // Symlink patterns
     for pattern in &cfg.symlink_patterns {
-        let name_pattern = pattern.rsplit('/').next().unwrap_or(pattern);
-        let matches = glob::glob(&format!("{}/**/{name_pattern}", repo_root.display()))
+        let matches = glob::glob(&format!("{}/{pattern}", repo_root.display()))
             .map_err(|e| e.to_string())?;
 
         for entry in matches.flatten() {
@@ -108,7 +113,7 @@ pub fn new_worker(name: &str, branch: &str) -> Result<(), String> {
 
 /// List all worker environments
 pub fn list_workers() -> Result<(), String> {
-    let workers_dir = config::workers_dir();
+    let workers_dir = config::workers_dir()?;
     if !workers_dir.exists() {
         return Ok(());
     }
@@ -133,7 +138,7 @@ pub fn list_workers() -> Result<(), String> {
 
 /// Print the path to a worker
 pub fn worker_path(name: &str) -> Result<(), String> {
-    let workers_dir = config::workers_dir();
+    let workers_dir = config::workers_dir()?;
     let worker_dir = workers_dir.join(name);
     if worker_dir.exists() {
         println!("{}", worker_dir.display());
@@ -147,14 +152,17 @@ pub fn worker_path(name: &str) -> Result<(), String> {
             return Ok(());
         }
     }
-    Err(format!("worker '{name}' not found"))
+    Err(format!("worker '{name}' not found. Run `ccws ls` to see available workers."))
 }
 
 /// Remove a worker environment
-pub fn remove_worker(name: Option<&str>, all: bool) -> Result<(), String> {
-    let workers_dir = config::workers_dir();
+pub fn remove_worker(name: Option<&str>, all: bool, force: bool) -> Result<(), String> {
+    let workers_dir = config::workers_dir()?;
 
     if all {
+        if !force {
+            return Err("--all requires --force to prevent accidental deletion".into());
+        }
         if workers_dir.exists() {
             fs::remove_dir_all(&workers_dir).map_err(|e| e.to_string())?;
             eprintln!("Removed all workers");
@@ -162,7 +170,9 @@ pub fn remove_worker(name: Option<&str>, all: bool) -> Result<(), String> {
         return Ok(());
     }
 
-    let name = name.ok_or("specify a worker name or --all")?;
+    let name = name.ok_or("specify a worker name or --all --force")?;
+    config::validate_worker_name(name)?;
+
     let worker_dir = workers_dir.join(name);
     if worker_dir.exists() {
         fs::remove_dir_all(&worker_dir).map_err(|e| e.to_string())?;
@@ -179,7 +189,7 @@ pub fn remove_worker(name: Option<&str>, all: bool) -> Result<(), String> {
             return Ok(());
         }
     }
-    Err(format!("worker '{name}' not found"))
+    Err(format!("worker '{name}' not found. Run `ccws ls` to see available workers."))
 }
 
 // --- helpers ---

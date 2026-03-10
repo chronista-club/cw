@@ -23,7 +23,7 @@ flowchart LR
     E --> F["post-setup 実行"]
 ```
 
-1. カレントリポジトリを `~/.cache/ccws/<リポ名>-issue-42` に `--depth 1` で clone する
+1. カレントリポジトリを `~/.local/share/ccws/<リポ名>-issue-42` に `--depth 1` で clone する
 2. clone 先の remote を GitHub の URL に差し替える（push 先を正しく設定）
 3. `.claude/worker-files.kdl` を読み、指定されたファイルを symlink / copy する
 4. `fix/login-bug` ブランチを作成する
@@ -70,7 +70,7 @@ ccws new <name> <branch>   # ワーカー環境を作成
 ccws ls                     # 一覧表示（名前・ブランチ・パス）
 ccws path <name>            # ワーカーのパスを出力
 ccws rm <name>              # 削除
-ccws rm --all               # 全ワーカーを削除
+ccws rm --all --force       # 全ワーカーを削除
 ```
 
 `ccws path` は stdout にパスだけを出力するので、他のコマンドと組み合わせられる:
@@ -79,7 +79,7 @@ ccws rm --all               # 全ワーカーを削除
 cd $(ccws path issue-42)
 ```
 
-ワーカーのデフォルト保存先は `~/.cache/ccws/`。`CCWS_WORKERS_DIR` 環境変数で変更できる。
+ワーカーのデフォルト保存先は `~/.local/share/ccws/`（XDG準拠）。`CCWS_WORKERS_DIR` 環境変数で変更できる。
 
 ## ライセンス
 
