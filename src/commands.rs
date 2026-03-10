@@ -366,19 +366,29 @@ fn capture_dirty_diff(repo_root: &Path) -> Result<Option<String>, String> {
             if file.is_empty() {
                 continue;
             }
-            // Read the untracked file content and generate a pseudo-diff
-            let file_path = repo_root.join(file);
-            if let Ok(content) = fs::read_to_string(&file_path) {
-                full_diff.push_str(&format!("diff --git a/{file} b/{file}\n"));
-                full_diff.push_str("new file mode 100644\n");
-                full_diff.push_str("--- /dev/null\n");
-                full_diff.push_str(&format!("+++ b/{file}\n"));
-                let lines: Vec<&str> = content.lines().collect();
-                full_diff.push_str(&format!("@@ -0,0 +1,{} @@\n", lines.len()));
-                for line in &lines {
-                    full_diff.push('+');
-                    full_diff.push_str(line);
-                    full_diff.push('\n');
+            // Use git diff --no-index to generate a proper patch (handles binary, no-newline, etc.)
+            let file_diff = Command::new("git")
+                .args(["diff", "--no-index", "--", "/dev/null", file])
+                .current_dir(repo_root)
+                .output()
+                .ok();
+            if let Some(output) = file_diff {
+                // --no-index exits 1 when files differ (expected), only skip on spawn failure
+                let patch = String::from_utf8_lossy(&output.stdout);
+                if !patch.is_empty() {
+                    // Rewrite paths: /dev/null → a/<file>, <file> → b/<file>
+                    for line in patch.lines() {
+                        if line.starts_with("+++ ") && !line.contains("/dev/null") {
+                            full_diff.push_str(&format!("+++ b/{file}\n"));
+                        } else if line.starts_with("--- /dev/null") {
+                            full_diff.push_str("--- /dev/null\n");
+                        } else if line.starts_with("diff --git") {
+                            full_diff.push_str(&format!("diff --git a/{file} b/{file}\n"));
+                        } else {
+                            full_diff.push_str(line);
+                            full_diff.push('\n');
+                        }
+                    }
                 }
             }
         }
@@ -397,6 +407,7 @@ fn apply_patch(worker_dir: &Path, patch: &str) -> Result<(), String> {
         .args(["apply", "--allow-empty", "-"])
         .current_dir(worker_dir)
         .stdin(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| e.to_string())?;
 
@@ -405,9 +416,10 @@ fn apply_patch(worker_dir: &Path, patch: &str) -> Result<(), String> {
         stdin.write_all(patch.as_bytes()).map_err(|e| e.to_string())?;
     }
 
-    let status = child.wait().map_err(|e| e.to_string())?;
-    if !status.success() {
-        return Err("git apply failed — some changes could not be transferred".to_string());
+    let output = child.wait_with_output().map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git apply failed: {stderr}"));
     }
 
     Ok(())
@@ -494,18 +506,42 @@ fn get_last_commit(dir: &std::path::Path) -> String {
 }
 
 /// Check if HEAD in the worker dir is merged into origin/main (or origin/master).
-/// Uses `git merge-base --is-ancestor HEAD origin/<main>` inside the worker directory.
+/// A worker is "merged" only if:
+///   1. HEAD is an ancestor of origin/<main> (merge-base --is-ancestor), AND
+///   2. The worker has diverged (has at least 1 local commit beyond origin/<main>)
+/// This prevents false positives on freshly-created workers (HEAD == origin/main).
 fn is_branch_merged(worker_dir: &std::path::Path) -> bool {
     for branch in &["main", "master"] {
         let remote_ref = format!("origin/{branch}");
-        let output = Command::new("git")
+
+        // Check if HEAD is ancestor of remote main
+        let ancestor = Command::new("git")
             .args(["merge-base", "--is-ancestor", "HEAD", &remote_ref])
             .current_dir(worker_dir)
             .output()
             .ok();
-        if matches!(output, Some(ref o) if o.status.success()) {
-            return true;
+        if !matches!(ancestor, Some(ref o) if o.status.success()) {
+            continue;
         }
+
+        // Guard: skip if worker has no local commits (HEAD == origin/main)
+        let diverged = Command::new("git")
+            .args(["rev-list", &format!("{remote_ref}..HEAD"), "--count"])
+            .current_dir(worker_dir)
+            .output()
+            .ok();
+        let local_commits: usize = diverged
+            .as_ref()
+            .filter(|o| o.status.success())
+            .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse().ok())
+            .unwrap_or(0);
+
+        if local_commits == 0 {
+            // No divergence — freshly created worker, not "merged"
+            continue;
+        }
+
+        return true;
     }
     false
 }

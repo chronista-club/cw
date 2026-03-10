@@ -112,14 +112,19 @@ pub fn workers_dir() -> Result<PathBuf, String> {
     Ok(data.join("ccws"))
 }
 
-/// Validate that a worker name is safe (no path traversal)
+/// Validate that a worker name is safe (allowlist: alphanumeric, hyphen, underscore)
 pub fn validate_worker_name(name: &str) -> Result<(), String> {
     if name.is_empty() {
         return Err("worker name cannot be empty".into());
     }
-    if name.contains('/') || name.contains('\\') || name.contains("..") || name.starts_with('.') {
+    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
         return Err(format!(
-            "invalid worker name: '{name}'. Names cannot contain '/', '\\', '..', or start with '.'"
+            "invalid worker name: '{name}'. Only [a-zA-Z0-9_-] are allowed."
+        ));
+    }
+    if name.starts_with('-') || name.starts_with('_') {
+        return Err(format!(
+            "invalid worker name: '{name}'. Must start with an alphanumeric character."
         ));
     }
     Ok(())
@@ -167,22 +172,20 @@ mod tests {
     }
 
     #[test]
-    fn slash_rejected() {
+    fn special_chars_rejected() {
         assert!(validate_worker_name("../etc/passwd").is_err());
         assert!(validate_worker_name("foo/bar").is_err());
         assert!(validate_worker_name("foo\\bar").is_err());
-    }
-
-    #[test]
-    fn dotdot_rejected() {
-        assert!(validate_worker_name("..sneaky").is_err());
-        assert!(validate_worker_name("foo..bar").is_err());
-    }
-
-    #[test]
-    fn leading_dot_rejected() {
         assert!(validate_worker_name(".hidden").is_err());
-        assert!(validate_worker_name(".git").is_err());
+        assert!(validate_worker_name("$(rm -rf)").is_err());
+        assert!(validate_worker_name("foo;bar").is_err());
+        assert!(validate_worker_name("foo bar").is_err());
+    }
+
+    #[test]
+    fn leading_separator_rejected() {
+        assert!(validate_worker_name("-leading").is_err());
+        assert!(validate_worker_name("_leading").is_err());
     }
 
     // --- load_config (KDL parsing) ---
